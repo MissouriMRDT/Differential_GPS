@@ -1,0 +1,1 @@
+sudo str2str -in ntrip://pi:nandgate@10.128.11.119:2101/corrections -b 1 -out serial://ttyACM0:38400:8:n:1
