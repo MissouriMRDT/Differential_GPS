@@ -4,7 +4,7 @@ import time
 import serial
 
 ser = serial.Serial(
-	port='/dev/ttyAMA0',
+	port='/dev/serial0',
 	baudrate=38400,
 	parity=serial.PARITY_NONE,
 	stopbits=serial.STOPBITS_ONE,
