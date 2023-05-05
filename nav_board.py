@@ -68,6 +68,8 @@ def main() -> None:
 
     # Check for user interupt.
     try:
+        # Create instance variables.
+        hAcc, vAcc, accurHeading = None, None, None
         # Loop forever.
         while True:
             # Decode current message.
@@ -80,21 +82,19 @@ def main() -> None:
                 # Check if message is Navigation Position Velocity Time.
                 if parsed_data.identity == "NAV-PVT":
                     # Get data from parser.
-                    lat, lon, alt, hAcc, vAcc, headVeh, magDec, fix_type, diff = parsed_data.lat, parsed_data.lon, parsed_data.hMSL, parsed_data.hAcc, parsed_data.vAcc, parsed_data.headVeh, parsed_data.magDec, parsed_data.fixType, parsed_data.difSoln
+                    lat, lon, alt, hAcc, vAcc, fix_type, diff = parsed_data.lat, parsed_data.lon, parsed_data.hMSL, parsed_data.hAcc, parsed_data.vAcc, parsed_data.fixType, parsed_data.difSoln
                     # Send RoveComm Packets.
                     packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["GPSLatLon"]["dataId"], "f", (lat, lon))
                     rovecomm_node.write(packet, False)
                     # Logger info.
-                    logger.info(f"NAV_PVT: lat = {lat}, lon = {lon}, alt = {alt / 1000} m, horizontal_accur = {hAcc / 1000} m, vertical_accur = {vAcc / 1000} m, vehicle_heading = {headVeh / 1000}, magnetic_declination = {magDec}, fix_type = {NAV_FIX_TYPE(fix_type + 1)}, diff? = {bool(diff)}")
+                    logger.info(f"NAV_PVT: lat = {lat}, lon = {lon}, alt = {alt / 1000} m, horizontal_accur = {hAcc / 1000} m, vertical_accur = {vAcc / 1000} m, fix_type = {NAV_FIX_TYPE(fix_type + 1)}, diff? = {bool(diff)}")
                 # Check if message is Relative Positioning Information in NED frame
                 if parsed_data.identity == "NAV-RELPOSNED":
                     # Get data from parser.
                     relPosHeading, accurHeading = parsed_data.relPosHeading, parsed_data.accHeading
                     # Send RoveComm Packets.
-                    # packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["IMUData"]["dataId"], "f", (PYR[0], PYR[1], PYR[2]))
-                    # rovecomm_node.write(packet, False)  
-                    # packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["CompassData"]["dataId"], "f", (Bearing))
-                    # rovecomm_node.write(packet, False)
+                    packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["CompassData"]["dataId"], "f", (relPosHeading,))
+                    rovecomm_node.write(packet, False)
                     # Logger info.
                     logger.info(f"NAV-RELPOSNED: relative_position_heading = {relPosHeading}, heading_accur = {accurHeading}")
                 # Check if message is Satelite Information
@@ -106,6 +106,12 @@ def main() -> None:
                     rovecomm_node.write(packet, False)
                     # Logger info.
                     logger.info(f"NAV-SAT: gps_time = {gps_time} ms, num_sats = {numSvs}")
+
+                # Check if all accuracy data has been retrieved at least once.
+                if None not in (hAcc, vAcc, accurHeading):
+                    # Put send accuracy data over RoveComm.
+                    packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["AccuracyData"]["dataId"], "f", (hAcc, vAcc, accurHeading))
+                    rovecomm_node.write(packet, False)
             
     except KeyboardInterrupt:
         print("Terminated by user")
