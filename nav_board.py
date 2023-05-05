@@ -79,13 +79,33 @@ def main() -> None:
             else:
                 # Check if message is Navigation Position Velocity Time.
                 if parsed_data.identity == "NAV-PVT":
+                    # Get data from parser.
                     lat, lon, alt, hAcc, vAcc, headVeh, magDec, fix_type, diff = parsed_data.lat, parsed_data.lon, parsed_data.hMSL, parsed_data.hAcc, parsed_data.vAcc, parsed_data.headVeh, parsed_data.magDec, parsed_data.fixType, parsed_data.difSoln
-                    logger.info(f"NAV_PVT: lat = {lat}, lon = {lon}, alt = {alt / 1000} m, horizontal_acc = {hAcc / 1000}, vertical_acc = {vAcc / 1000}, vehicle_heading = {headVeh / 1000}, magnetic_declination = {magDec}, fix_type = {NAV_FIX_TYPE(fix_type + 1)}, diff? = {bool(diff)}")
+                    # Send RoveComm Packets.
+                    packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["GPSLatLon"]["dataId"], "f", (lat, lon))
+                    rovecomm_node.write(packet, False)
+                    # Logger info.
+                    logger.info(f"NAV_PVT: lat = {lat}, lon = {lon}, alt = {alt / 1000} m, horizontal_accur = {hAcc / 1000} m, vertical_accur = {vAcc / 1000} m, vehicle_heading = {headVeh / 1000}, magnetic_declination = {magDec}, fix_type = {NAV_FIX_TYPE(fix_type + 1)}, diff? = {bool(diff)}")
                 # Check if message is Relative Positioning Information in NED frame
                 if parsed_data.identity == "NAV-RELPOSNED":
-                    relPosHPN, relPosHPE, relPosHPD = parsed_data.relPosHPN, parsed_data.relPosHPE, parsed_data.relPosHPD
-                    logger.info(f"NAV-RELPOSNED: relative_pos_highAccNorth = {relPosHPN}, relative_pos_highAccEast = {relPosHPE}, relative_pos_highAccDown = {relPosHPD}")
-
+                    # Get data from parser.
+                    relPosHeading, accurHeading = parsed_data.relPosHeading, parsed_data.accHeading
+                    # Send RoveComm Packets.
+                    # packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["IMUData"]["dataId"], "f", (PYR[0], PYR[1], PYR[2]))
+                    # rovecomm_node.write(packet, False)  
+                    # packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["CompassData"]["dataId"], "f", (Bearing))
+                    # rovecomm_node.write(packet, False)
+                    # Logger info.
+                    logger.info(f"NAV-RELPOSNED: relative_position_heading = {relPosHeading}, heading_accur = {accurHeading}")
+                # Check if message is Satelite Information
+                if parsed_data.identity == "NAV-SAT":
+                    # Get data from parser.
+                    gps_time, numSvs = parsed_data.iTOW, parsed_data.numSvs
+                    # Send RoveComm Packets.
+                    packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["SatelliteCountData"]["dataId"], "h", (numSvs,))
+                    rovecomm_node.write(packet, False)
+                    # Logger info.
+                    logger.info(f"NAV-SAT: gps_time = {gps_time} ms, num_sats = {numSvs}")
             
     except KeyboardInterrupt:
         print("Terminated by user")
