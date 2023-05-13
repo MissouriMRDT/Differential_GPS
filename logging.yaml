@@ -33,5 +33,5 @@ loggers:
     handlers: [console, csv]
     propagate: False
 root:
-  level: DEBUG
+  level: INFO
   handlers: [csv, console]

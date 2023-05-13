@@ -8,6 +8,7 @@ pyubx2 = "*"
 pyyaml = "*"
 rich = "*"
 pyserial = "*"
+utm = "*"
 
 [dev-packages]
 

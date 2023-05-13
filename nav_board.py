@@ -2,6 +2,7 @@ import argparse
 import logging
 import logging.config
 import yaml
+import utm
 import rich
 from serial import Serial
 from enum import Enum
@@ -69,7 +70,7 @@ def main() -> None:
     # Check for user interupt.
     try:
         # Create instance variables.
-        hAcc, vAcc, accurHeading = None, None, None
+        hAcc, vAcc, accurHeading, lat, lon = None, None, None, None, None
         # Loop forever.
         while True:
             # Decode current message.
@@ -77,12 +78,15 @@ def main() -> None:
             
             # Check if serial message was recieved properly.
             if isinstance(parsed_data, str) and "UNKNOWN PROTOCOL" in parsed_data:
-                logger.error("Serial Message not recieved properly.")
-            else:
+                logger.debug("Serial Message not recieved properly.")
+            elif parsed_data is not None and not isinstance(parsed_data, str):
                 # Check if message is Navigation Position Velocity Time.
                 if parsed_data.identity == "NAV-PVT":
                     # Get data from parser.
                     lat, lon, alt, hAcc, vAcc, fix_type, diff = parsed_data.lat, parsed_data.lon, parsed_data.hMSL, parsed_data.hAcc, parsed_data.vAcc, parsed_data.fixType, parsed_data.difSoln
+                    # Convert rover lat long to UTM.
+                    meter_loc = utm.from_latlon(lat, lon)
+                    logger.info(f"UTM LATLON Pos: {meter_loc}")
                     # Send RoveComm Packets.
                     packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["GPSLatLon"]["dataId"], "f", (lat, lon))
                     rovecomm_node.write(packet, False)
@@ -93,7 +97,9 @@ def main() -> None:
                     # Get data from parser.
                     relPosHeading, accurHeading = parsed_data.relPosHeading, parsed_data.accHeading
                     # Send RoveComm Packets.
-                    packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["CompassData"]["dataId"], "f", (relPosHeading,))
+                    packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["CompassData"]["dataId"], "f", (-relPosHeading,))
+                    rovecomm_node.write(packet, False)
+                    packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["IMUData"]["dataId"], "f", (0, -relPosHeading, 0))
                     rovecomm_node.write(packet, False)
                     # Logger info.
                     logger.info(f"NAV-RELPOSNED: relative_position_heading = {relPosHeading}, heading_accur = {accurHeading}")
@@ -110,9 +116,9 @@ def main() -> None:
                 # Check if all accuracy data has been retrieved at least once.
                 if None not in (hAcc, vAcc, accurHeading):
                     # Put send accuracy data over RoveComm.
-                    packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["AccuracyData"]["dataId"], "f", (hAcc, vAcc, accurHeading))
+                    packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["AccuracyData"]["dataId"], "f", (hAcc / 1000, vAcc / 1000, accurHeading))
                     rovecomm_node.write(packet, False)
-            
+
     except KeyboardInterrupt:
         print("Terminated by user")
 
