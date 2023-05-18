@@ -5,6 +5,8 @@ import yaml
 import utm
 import rich
 import serial
+from threading import Thread, Event, Lock
+from queue import Queue
 from enum import Enum
 import pyubx2
 from RoveComm_Python.rovecomm import RoveComm, RoveCommPacket, get_manifest
@@ -45,6 +47,37 @@ def flush_serial(serial):
     serial.reset_input_buffer()
     serial.reset_output_buffer()
 
+def read_data(
+    stream: object,
+    ubr: pyubx2.UBXReader,
+    queue: Queue,
+    lock: Lock,
+    stop: Event,
+):
+    """
+    Read and parse incoming UBX data and place
+    raw and parsed data on queue
+    """
+    # pylint: disable=unused-variable, broad-except
+    # Check if thread should stop.
+    while not stop.is_set():
+        # See if the serial stream has any data for us.
+        if stream.in_waiting:
+            try:
+                # Get thread lock for resource.
+                lock.acquire()
+                # Read and parse data.
+                (raw_data, parsed_data) = ubr.read()
+                # Release lock.
+                lock.release()
+                # Store data in queue.
+                if parsed_data:
+                    queue.put(("", parsed_data))
+            except Exception as err:
+                print(f"\n\nSomething went wrong {err}\n\n")
+                continue
+
+
 
 def main() -> None:
     # Create argument parser.
@@ -78,11 +111,29 @@ def main() -> None:
     rovecomm_node = RoveComm()
 
     # Setup serial input and ubx decoder.
-    serial_stream = serial.Serial(port=args.serial_path, baudrate=SERIAL_BAUD, timeout=0.001)
-    # ubx_decode = pyubx2.UBXReader(serial_stream)
+    serial_stream = serial.Serial(port=args.serial_path, baudrate=SERIAL_BAUD, timeout=0.1)
+    ubx_decode = pyubx2.UBXReader(serial_stream, protfilter=pyubx2.UBX_PROTOCOL, validate=1)
 
     # UBX enumerator constants.
     NAV_FIX_TYPE = Enum("NAV_FIX_TYPE", ["FIX_TYPE_NO_FIX", "FIX_TYPE_DEAD_RECKONING_ONLY", "FIX_TYPE_2D", "FIX_TYPE_3D", "FIX_TYPE_GNSS_DEAD_RECKONING_COMBINED", "FIX_TYPE_TIME_ONLY"])
+
+    # Create queues, locks, and events for threaded reading.
+    serial_lock = Lock()
+    read_queue = Queue()
+    stop_event = Event()
+    # Create read thread.
+    read_thread = Thread(
+        target=read_data,
+        args=(
+            serial_stream,
+            ubx_decode,
+            read_queue,
+            serial_lock,
+            stop_event,
+        ),
+    )
+    logger.info("Starting read handler processes. Press Ctrl-C to terminate...")
+    read_thread.start()
 
     # Check for user interupt.
     try:
@@ -91,13 +142,15 @@ def main() -> None:
         # Loop forever.
         while True:
             # Wait until there is something in the serial port to read.
-            if serial_stream.inWaiting() > 0:
+            if serial_stream.in_waiting:
                 # Decode current message.
-                # (raw_data, parsed_data) = ubx_decode.read()
-                try:
-                    parsed_data = pyubx2.UBXReader.parse(serial_stream.readline(), validate=pyubx2.VALCKSUM)
-                except:
-                    parsed_data = "UNKNOWN PROTOCOL"
+                raw_data, parsed_data = read_queue.get()
+                # try:
+                #     out = serial_stream.readline()
+                #     parsed_data = pyubx2.UBXReader.parse(out, quitonerror=0, validate=pyubx2.VALCKSUM, parsebitfield=1)
+                # except Exception as e:
+                #     print("ERROR:", e)
+                #     parsed_data = ""
                 
                 # Check if serial message was recieved properly.
                 if isinstance(parsed_data, str) and "UNKNOWN PROTOCOL" in parsed_data:
@@ -112,14 +165,12 @@ def main() -> None:
                         lat, lon, alt, hAcc, vAcc, fix_type, diff = parsed_data.lat, parsed_data.lon, parsed_data.hMSL, parsed_data.hAcc, parsed_data.vAcc, parsed_data.fixType, parsed_data.difSoln
                         # Convert rover lat long to UTM.
                         meter_loc = utm.from_latlon(lat, lon)
-                        # logger.info(f"UTM LATLON Pos: {meter_loc}")
+                        logger.info(f"UTM LATLON Pos: {meter_loc}")
                         # Send RoveComm Packets.
                         packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["GPSLatLon"]["dataId"], "f", (lat, lon))
                         rovecomm_node.write(packet, False)
-                        # Flush serial bus.
-                        flush_serial(serial_stream)
                         # Logger info.
-                        # logger.info(f"NAV_PVT: lat = {lat}, lon = {lon}, alt = {alt / 1000} m, horizontal_accur = {hAcc / 1000} m, vertical_accur = {vAcc / 1000} m, fix_type = {NAV_FIX_TYPE(fix_type + 1)}, diff? = {bool(diff)}")
+                        logger.info(f"NAV_PVT: lat = {lat}, lon = {lon}, alt = {alt / 1000} m, horizontal_accur = {hAcc / 1000} m, vertical_accur = {vAcc / 1000} m, fix_type = {NAV_FIX_TYPE(fix_type + 1)}, diff? = {bool(diff)}")
                     # Check if message is Relative Positioning Information in NED frame
                     if parsed_data.identity == "NAV-RELPOSNED":
                         # Get data from parser.
@@ -129,8 +180,6 @@ def main() -> None:
                         rovecomm_node.write(packet, False)
                         packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["IMUData"]["dataId"], "f", (0, -relPosHeading, 0))
                         rovecomm_node.write(packet, False)
-                        # Flush serial bus.
-                        flush_serial(serial_stream)
                         # Logger info.
                         logger.info(f"NAV-RELPOSNED: relative_position_heading = {relPosHeading}, heading_accur = {accurHeading}")
                     # Check if message is Satelite Information
@@ -140,10 +189,8 @@ def main() -> None:
                         # Send RoveComm Packets.
                         packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["SatelliteCountData"]["dataId"], "h", (numSvs,))
                         rovecomm_node.write(packet, False)
-                        # Flush serial bus.
-                        flush_serial(serial_stream)
                         # Logger info.
-                        # logger.info(f"NAV-SAT: gps_time = {gps_time} ms, num_sats = {numSvs}")
+                        logger.info(f"NAV-SAT: gps_time = {gps_time} ms, num_sats = {numSvs}")
 
                     # Check if all accuracy data has been retrieved at least once.
                     if None not in (hAcc, vAcc, accurHeading):
@@ -153,8 +200,10 @@ def main() -> None:
 
     except KeyboardInterrupt:
         print("Terminated by user")
+        stop_event.set()
 
     # Cleanup.
+    read_thread.join()
     rovecomm_node.close_thread()
     serial_stream.close()
 

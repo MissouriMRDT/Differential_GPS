@@ -9,7 +9,6 @@ pyyaml = "*"
 rich = "*"
 pyserial = "*"
 utm = "*"
-sbc = "*"
 
 [dev-packages]
 
