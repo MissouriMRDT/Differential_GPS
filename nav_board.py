@@ -62,7 +62,7 @@ def read_data(
     # Check if thread should stop.
     while not stop.is_set():
         # See if the serial stream has any data for us.
-        if stream.in_waiting:
+        if stream.inWaiting() > 0:
             try:
                 # Get thread lock for resource.
                 lock.acquire()
@@ -74,10 +74,7 @@ def read_data(
                 if parsed_data:
                     queue.put(("", parsed_data))
             except Exception as err:
-                print(f"\n\nSomething went wrong {err}\n\n")
-                continue
-
-
+                pass
 
 def main() -> None:
     # Create argument parser.
@@ -135,6 +132,9 @@ def main() -> None:
     logger.info("Starting read handler processes. Press Ctrl-C to terminate...")
     read_thread.start()
 
+    # Create an array to track which messages have been properly read.
+    msg_success_array = [0, 0, 0]
+
     # Check for user interupt.
     try:
         # Create instance variables.
@@ -145,19 +145,11 @@ def main() -> None:
             if serial_stream.in_waiting:
                 # Decode current message.
                 raw_data, parsed_data = read_queue.get()
-                # try:
-                #     out = serial_stream.readline()
-                #     parsed_data = pyubx2.UBXReader.parse(out, quitonerror=0, validate=pyubx2.VALCKSUM, parsebitfield=1)
-                # except Exception as e:
-                #     print("ERROR:", e)
-                #     parsed_data = ""
                 
                 # Check if serial message was recieved properly.
                 if isinstance(parsed_data, str) and "UNKNOWN PROTOCOL" in parsed_data:
                     # Print warning.
                     logger.warning("Serial Message not recieved properly.")
-                    # Flush serial bus.
-                    flush_serial(serial_stream)
                 elif parsed_data is not None and not isinstance(parsed_data, str):
                     # Check if message is Navigation Position Velocity Time.
                     if parsed_data.identity == "NAV-PVT":
@@ -171,6 +163,8 @@ def main() -> None:
                         rovecomm_node.write(packet, False)
                         # Logger info.
                         logger.info(f"NAV_PVT: lat = {lat}, lon = {lon}, alt = {alt / 1000} m, horizontal_accur = {hAcc / 1000} m, vertical_accur = {vAcc / 1000} m, fix_type = {NAV_FIX_TYPE(fix_type + 1)}, diff? = {bool(diff)}")
+                        # Increment msg array.
+                        msg_success_array[0] += 1
                     # Check if message is Relative Positioning Information in NED frame
                     if parsed_data.identity == "NAV-RELPOSNED":
                         # Get data from parser.
@@ -182,6 +176,8 @@ def main() -> None:
                         rovecomm_node.write(packet, False)
                         # Logger info.
                         logger.info(f"NAV-RELPOSNED: relative_position_heading = {relPosHeading}, heading_accur = {accurHeading}")
+                        # Increment msg array.
+                        msg_success_array[1] += 1
                     # Check if message is Satelite Information
                     if parsed_data.identity == "NAV-SAT":
                         # Get data from parser.
@@ -191,12 +187,31 @@ def main() -> None:
                         rovecomm_node.write(packet, False)
                         # Logger info.
                         logger.info(f"NAV-SAT: gps_time = {gps_time} ms, num_sats = {numSvs}")
+                        # Increment msg array.
+                        msg_success_array[2] += 1
 
                     # Check if all accuracy data has been retrieved at least once.
                     if None not in (hAcc, vAcc, accurHeading):
                         # Put send accuracy data over RoveComm.
                         packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["AccuracyData"]["dataId"], "f", (hAcc / 1000, vAcc / 1000, accurHeading))
                         rovecomm_node.write(packet, False)
+
+            # If all messages have been sent at least once reset the serial buffer.
+            if all(i > 1 for i in msg_success_array):
+                # Clear buffers.
+                serial_lock.acquire()
+                flush_serial(serial_stream)
+                serial_lock.release()
+                # Reset array.
+                msg_success_array = [0, 0, 0]
+            # Check if at least one number is greater than a max value.
+            if any(i > 10 for i in msg_success_array):
+                # Clear buffers.
+                serial_lock.acquire()
+                flush_serial(serial_stream)
+                serial_lock.release()
+                # Reset array.
+                msg_success_array = [0, 0, 0]
 
     except KeyboardInterrupt:
         print("Terminated by user")
