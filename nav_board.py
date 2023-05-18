@@ -1,3 +1,6 @@
+# Specify environment.
+#!/usr/bin/env python
+
 import argparse
 import logging
 import logging.config
@@ -23,7 +26,7 @@ def setup_logger(level) -> logging.Logger:
         Logger: root set up for console and file logging
     """
     # logging file
-    yaml_conf = yaml.safe_load(open("logging.yaml", "r").read())
+    yaml_conf = yaml.safe_load(open("/home/pi/Differential_GPS/logging.yaml", "r").read())
     logging.config.dictConfig(yaml_conf)
 
     for handler in logging.getLogger().handlers:

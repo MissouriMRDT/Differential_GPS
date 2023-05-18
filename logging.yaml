@@ -11,27 +11,19 @@ handlers:
     level: 0
     formatter: simple
     rich_tracebacks: True
-  csv:
-    class: logging_handlers.CsvHandler
-    level: 0
-    formatter: csv
-    header: TIMESTAMP,MODULE,FUNCTION,LEVEL,MESSAGE
-    filename: logs/log.csv
-    new_file: True
-    delay: False
 loggers:
   Logging_Test:
     level: DEBUG
-    handlers: [console, csv]
+    handlers: [console]
     propagate: False
   core.telemetry_handler:
     level: DEBUG
-    handlers: [console, csv]
+    handlers: [console]
     propagate: False
   matplotlib:
     level: INFO
-    handlers: [console, csv]
+    handlers: [console]
     propagate: False
 root:
   level: INFO
-  handlers: [csv, console]
+  handlers: [console]
