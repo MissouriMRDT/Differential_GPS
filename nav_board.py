@@ -150,6 +150,10 @@ def main() -> None:
                 if isinstance(parsed_data, str) and "UNKNOWN PROTOCOL" in parsed_data:
                     # Print warning.
                     logger.warning("Serial Message not recieved properly.")
+                    # Clear buffers.
+                    serial_lock.acquire()
+                    flush_serial(serial_stream)
+                    serial_lock.release()
                 elif parsed_data is not None and not isinstance(parsed_data, str):
                     # Check if message is Navigation Position Velocity Time.
                     if parsed_data.identity == "NAV-PVT":
