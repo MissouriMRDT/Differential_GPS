@@ -137,6 +137,8 @@ def main() -> None:
 
     # Create an array to track which messages have been properly read.
     msg_success_array = [0, 0, 0]
+    # Create variables for storing previous data.
+    previousHeadingRover = 0
 
     # Check for user interupt.
     try:
@@ -164,26 +166,34 @@ def main() -> None:
                         lat, lon, alt, hAcc, vAcc, fix_type, diff = parsed_data.lat, parsed_data.lon, parsed_data.hMSL, parsed_data.hAcc, parsed_data.vAcc, parsed_data.fixType, parsed_data.difSoln
                         # Convert rover lat long to UTM.
                         meter_loc = utm.from_latlon(lat, lon)
-                        logger.info(f"UTM LATLON Pos: {meter_loc}")
+                        #logger.info(f"UTM LATLON Pos: {meter_loc}")
                         # Send RoveComm Packets.
                         packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["GPSLatLon"]["dataId"], "f", (lat, lon))
                         rovecomm_node.write(packet, False)
                         # Logger info.
-                        logger.info(f"NAV_PVT: lat = {lat}, lon = {lon}, alt = {alt / 1000} m, horizontal_accur = {hAcc / 1000} m, vertical_accur = {vAcc / 1000} m, fix_type = {NAV_FIX_TYPE(fix_type + 1)}, diff? = {bool(diff)}")
+                        #logger.info(f"NAV_PVT: lat = {lat}, lon = {lon}, alt = {alt / 1000} m, horizontal_accur = {hAcc / 1000} m, vertical_accur = {vAcc / 1000} m, fix_type = {NAV_FIX_TYPE(fix_type + 1)}, diff? = {bool(diff)}")
                         # Increment msg array.
                         msg_success_array[0] += 1
                     # Check if message is Relative Positioning Information in NED frame
                     if parsed_data.identity == "NAV-RELPOSNED":
                         # Get data from parser.
                         relPosHeading, accurHeading = parsed_data.relPosHeading, parsed_data.accHeading
+                        # Realign compass heading to rover front.
+                        if relPosHeading == 0:
+                            relPosHeadingRover = previousHeadingRover
+                        else:
+                            # Subtract 90 to allign to rover front.
+                            relPosHeadingRover = (relPosHeading - 90) % 360
+                        # Update previous position.
+                            previousHeadingRover = relPosHeadingRover
                         # Send RoveComm Packets.
-                        packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["CompassData"]["dataId"], "f", (-relPosHeading,))
+                        packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["CompassData"]["dataId"], "f", (relPosHeadingRover,))
                         rovecomm_node.write(packet, False)
-                        packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["IMUData"]["dataId"], "f", (0, -relPosHeading, 0))
+                        packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["IMUData"]["dataId"], "f", (0, relPosHeadingRover, 0))
                         rovecomm_node.write(packet, False)
                         # Logger info.
                         logger.info(f"NAV-RELPOSNED: relative_position_heading = {relPosHeading}, heading_accur = {accurHeading}")
-                        # Increment msg array.
+			# Increment msg array.
                         msg_success_array[1] += 1
                     # Check if message is Satelite Information
                     if parsed_data.identity == "NAV-SAT":
@@ -193,7 +203,7 @@ def main() -> None:
                         packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["SatelliteCountData"]["dataId"], "h", (numSvs,))
                         rovecomm_node.write(packet, False)
                         # Logger info.
-                        logger.info(f"NAV-SAT: gps_time = {gps_time} ms, num_sats = {numSvs}")
+                        #logger.info(f"NAV-SAT: gps_time = {gps_time} ms, num_sats = {numSvs}")
                         # Increment msg array.
                         msg_success_array[2] += 1
 
