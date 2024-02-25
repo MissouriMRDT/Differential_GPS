@@ -192,7 +192,7 @@ def main() -> None:
                         packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["IMUData"]["dataId"], "f", (0, relPosHeadingRover, 0))
                         rovecomm_node.write(packet, False)
                         # Logger info.
-                        logger.info(f"NAV-RELPOSNED: relative_position_heading = {relPosHeading}, heading_accur = {accurHeading}")
+                        #logger.info(f"NAV-RELPOSNED: relative_position_heading = {relPosHeading}, heading_accur = {accurHeading}")
 			# Increment msg array.
                         msg_success_array[1] += 1
                     # Check if message is Satelite Information
