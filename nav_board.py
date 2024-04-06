@@ -168,7 +168,7 @@ def main() -> None:
                         meter_loc = utm.from_latlon(lat, lon)
                         #logger.info(f"UTM LATLON Pos: {meter_loc}")
                         # Send RoveComm Packets.
-                        packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["GPSLatLonAlt"]["dataId"], "f", (lat, lon, alt))
+                        packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["GPSLatLonAlt"]["dataId"], "f", (lat, lon, alt / 1000))
                         rovecomm_node.write(packet, False)
                         # Logger info.
                         #logger.info(f"NAV_PVT: lat = {lat}, lon = {lon}, alt = {alt / 1000} m, horizontal_accur = {hAcc / 1000} m, vertical_accur = {vAcc / 1000} m, fix_type = {NAV_FIX_TYPE(fix_type + 1)}, diff? = {bool(diff)}")
