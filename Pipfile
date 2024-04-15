@@ -9,8 +9,3 @@ pyyaml = "*"
 rich = "*"
 pyserial = "*"
 utm = "*"
-
-[dev-packages]
-
-[requires]
-python_version = "3.9"

@@ -143,7 +143,7 @@ def main() -> None:
     # Check for user interupt.
     try:
         # Create instance variables.
-        hAcc, vAcc, accurHeading, lat, lon = None, None, None, None, None
+        lat, lon, alt, hAcc, vAcc, fix_type, diff = None, None, None, None, None, None, None
         # Loop forever.
         while True:
             # Wait until there is something in the serial port to read.
@@ -168,7 +168,7 @@ def main() -> None:
                         meter_loc = utm.from_latlon(lat, lon)
                         #logger.info(f"UTM LATLON Pos: {meter_loc}")
                         # Send RoveComm Packets.
-                        packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["GPSLatLonAlt"]["dataId"], "f", (lat, lon, alt / 1000))
+                        packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["GPSLatLonAlt"]["dataId"], "d", (lat, lon, alt / 1000))
                         rovecomm_node.write(packet, False)
                         # Logger info.
                         #logger.info(f"NAV_PVT: lat = {lat}, lon = {lon}, alt = {alt / 1000} m, horizontal_accur = {hAcc / 1000} m, vertical_accur = {vAcc / 1000} m, fix_type = {NAV_FIX_TYPE(fix_type + 1)}, diff? = {bool(diff)}")
@@ -210,7 +210,7 @@ def main() -> None:
                     # Check if all accuracy data has been retrieved at least once.
                     if None not in (hAcc, vAcc, accurHeading):
                         # Put send accuracy data over RoveComm.
-                        packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["AccuracyData"]["dataId"], "f", (hAcc / 1000, vAcc / 1000, accurHeading))
+                        packet = RoveCommPacket(manifest["Nav"]["Telemetry"]["AccuracyData"]["dataId"], "f", (hAcc / 1000, vAcc / 1000, accurHeading, fix_type, diff))
                         rovecomm_node.write(packet, False)
 
             # If all messages have been sent at least once reset the serial buffer.
