@@ -1,7 +1,7 @@
 // Put these in the file opened after running sudo crontab -e
 
 # Connect to correctional service.
-@reboot /usr/local/bin/str2str -in ntrip://pi:nandgate@192.168.2.112:2101/corrections -b 1 -out serial://ttyUSB0:921600:8:n:1 &
+@reboot /usr/local/bin/str2str -in ntrip://pi:nandgate@192.168.100.112:2101/corrections -b 1 -out serial://ttyUSB0:921600:8:n:1 &
 
 // Put the nav_board.service file in
 sudo cp nav_board.service /etc/systemd/system/
