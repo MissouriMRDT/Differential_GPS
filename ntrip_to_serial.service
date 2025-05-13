@@ -1,0 +1,16 @@
+[Unit]
+Description=NTRIP to Serial Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/local/bin/str2str -in ntrip://pi:nandgate@192.168.100.112:2101/corrections -b 1 -out serial://ttyUSB0:921600:8:n:1
+Restart=on-failure
+RestartSec=30
+# Limiting log to 1 msg per minute
+LogRateLimitIntervalSec=1 minute
+LogRateLimitBurst=1
+
+[Install]
+WantedBy=multi-user.target
