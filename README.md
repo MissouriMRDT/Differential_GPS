@@ -214,6 +214,7 @@ Proper configuration of the u-blox GNSS modules is essential for optimal perform
 Pre-configured settings are available in the `config_baks` folder, which contains:
 - `base_config.txt` - Configuration backup for the base station
 - `rover_config.txt` - Configuration backup for the rover
+- `rover_heading_config.txt` - Configuration backup for the smaller heading board (hat) on the rover. 
 
 ### Configuration Steps
 
