@@ -130,6 +130,9 @@ def main() -> None:
                     relPosHeadingRover = (relPosHeading - 90) % 360
                     previousHeadingRover = relPosHeadingRover
 
+                # LOGGING
+                logger.info(f"[RELPOSNED] Heading: {relPosHeadingRover:.2f} | Acc: {current_heading_acc}")
+
                 # Send Compass Data
                 packet = RoveCommPacket(
                     manifest["Nav"]["Telemetry"]["CompassData"]["dataId"], 
@@ -151,6 +154,11 @@ def main() -> None:
                 diff = parsed_data.difSoln
 
                 if all(v is not None for v in [lat, lon, alt, hAcc, vAcc]):
+                    
+                    # LOGGING
+                    # Note: We log 'current_heading_acc' to verify we are using the moving baseline accuracy
+                    logger.info(f"[PVT] Lat: {lat}, Lon: {lon}, Fix: {fix_type}, HAcc: {hAcc}, HeadAcc (MB): {current_heading_acc}")
+
                     # We inject 'current_heading_acc' (from RELPOSNED) here
                     packet = RoveCommPacket(
                         manifest["Nav"]["Telemetry"]["GPSLatLonAlt"]["dataId"], 
@@ -164,6 +172,10 @@ def main() -> None:
             # ------------------------------------------------------------------
             elif msg_id == "NAV-SAT":
                 numSvs = parsed_data.numSvs
+                
+                # LOGGING
+                logger.info(f"[SAT] Visible Satellites: {numSvs}")
+
                 packet = RoveCommPacket(
                     manifest["Nav"]["Telemetry"]["SatelliteCountData"]["dataId"], 
                     "h", 
