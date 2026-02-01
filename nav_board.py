@@ -130,8 +130,8 @@ def main() -> None:
                     relPosHeadingRover = (relPosHeading - 90) % 360
                     previousHeadingRover = relPosHeadingRover
 
-                # LOGGING
-                logger.info(f"[RELPOSNED] Heading: {relPosHeadingRover:.2f} | Acc: {current_heading_acc}")
+                # LOGGING: RoveComm Compass Packet
+                logger.info(f"[TX Compass] Heading: {relPosHeadingRover:.4f}")
 
                 # Send Compass Data
                 packet = RoveCommPacket(
@@ -155,15 +155,24 @@ def main() -> None:
 
                 if all(v is not None for v in [lat, lon, alt, hAcc, vAcc]):
                     
-                    # LOGGING
-                    # Note: We log 'current_heading_acc' to verify we are using the moving baseline accuracy
-                    logger.info(f"[PVT] Lat: {lat}, Lon: {lon}, Fix: {fix_type}, HAcc: {hAcc}, HeadAcc (MB): {current_heading_acc}")
+                    # Convert to meters/standard units for RoveComm
+                    rc_alt = alt / 1000.0
+                    rc_hAcc = hAcc / 1000.0
+                    rc_vAcc = vAcc / 1000.0
+
+                    # LOGGING: RoveComm GPS Packet
+                    # Logs every field being sent in the packet below
+                    logger.info(
+                        f"[TX GPS] Lat: {lat:.7f}, Lon: {lon:.7f}, Alt: {rc_alt:.3f}, "
+                        f"HAcc: {rc_hAcc:.3f}, VAcc: {rc_vAcc:.3f}, "
+                        f"HeadAcc: {current_heading_acc:.3f}, Fix: {fix_type}, Diff: {diff}"
+                    )
 
                     # We inject 'current_heading_acc' (from RELPOSNED) here
                     packet = RoveCommPacket(
                         manifest["Nav"]["Telemetry"]["GPSLatLonAlt"]["dataId"], 
                         "d", 
-                        (lat, lon, alt / 1000.0, hAcc / 1000.0, vAcc / 1000.0, current_heading_acc, fix_type, diff)
+                        (lat, lon, rc_alt, rc_hAcc, rc_vAcc, current_heading_acc, fix_type, diff)
                     )
                     rovecomm_node.write(packet, False)
 
@@ -173,8 +182,8 @@ def main() -> None:
             elif msg_id == "NAV-SAT":
                 numSvs = parsed_data.numSvs
                 
-                # LOGGING
-                logger.info(f"[SAT] Visible Satellites: {numSvs}")
+                # LOGGING: RoveComm Sat Count Packet
+                logger.info(f"[TX SatCount] NumSvs: {numSvs}")
 
                 packet = RoveCommPacket(
                     manifest["Nav"]["Telemetry"]["SatelliteCountData"]["dataId"], 
