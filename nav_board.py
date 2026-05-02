@@ -6,6 +6,12 @@ import logging.config
 import yaml
 import glob
 import serial.tools.list_ports
+import os
+from pathlib import Path
+
+# Force MAVLink 2.0 protocol before importing pymavlink to ensure 
+# we get the extended fields in messages like GPS_RAW_INT
+os.environ["MAVLINK20"] = "1"
 from pymavlink import mavutil
 from RoveComm_Python.rovecomm import RoveComm, RoveCommPacket, get_manifest
 
@@ -15,7 +21,9 @@ def setup_logger(level) -> logging.Logger:
     handlers and formatting
     """
     try:
-        with open("/home/pi/Differential_GPS/logging.yaml", "r") as f:
+        # Use pathlib to get the path relative to this script's location.
+        config_path = Path(__file__).parent / "logging.yaml"
+        with open(config_path, "r") as f:
             yaml_conf = yaml.safe_load(f.read())
         logging.config.dictConfig(yaml_conf)
     except Exception:
@@ -34,8 +42,9 @@ def autodetect_fc(logger: logging.Logger) -> str:
     
     # 1. Scan available COM ports for common identifiers
     for port in serial.tools.list_ports.comports():
-        desc = port.description.lower()
-        hwid = port.hwid.lower()
+        # Safely handle None types for virtual/headless TTY ports
+        desc = (port.description or "").lower()
+        hwid = (port.hwid or "").lower()
         
         # Look for standard Ardupilot, Pixhawk, or standard STM32 VCP VID:PID combinations
         if any(kw in desc for kw in ['ardupilot', 'pixhawk', 'px4', 'cube', 'fmu', 'stm32']):
@@ -98,11 +107,21 @@ def main() -> None:
         master.wait_heartbeat(timeout=10)
         logger.info(f"Target connected! System: {master.target_system}, Component: {master.target_component}")
         
-        # Request all data streams at 10 Hz
-        master.mav.request_data_stream_send(
-            master.target_system, master.target_component,
-            mavutil.mavlink.MAV_DATA_STREAM_ALL, 10, 1)
-            
+        # Removed conflicting legacy stream request method. 
+        # Only use the modern targeted interval command.
+        requested_messages = [
+            mavutil.mavlink.MAVLINK_MSG_ID_GLOBAL_POSITION_INT,
+            mavutil.mavlink.MAVLINK_MSG_ID_GPS_RAW_INT,
+            mavutil.mavlink.MAVLINK_MSG_ID_EKF_STATUS_REPORT
+        ]
+        
+        for msg_id in requested_messages:
+            master.mav.command_long_send(
+                master.target_system, master.target_component,
+                mavutil.mavlink.MAV_CMD_SET_MESSAGE_INTERVAL,
+                0, msg_id, 100000, 0, 0, 0, 0, 0
+            )
+
     except Exception as e:
         logger.critical(f"Failed to establish MAVLink connection: {e}")
         exit(1)
@@ -118,8 +137,11 @@ def main() -> None:
     logger.info("Starting MAVLink read loop. Press Ctrl-C to terminate.")
     try:
         while True:
-            # Block until a valid MAVLink message is received
-            msg = master.recv_match(blocking=True)
+            # Filter recv_match to only return the messages we actually care about.
+            msg = master.recv_match(
+                type=["GLOBAL_POSITION_INT", "GPS_RAW_INT", "EKF_STATUS_REPORT"], 
+                blocking=True
+            )
             if not msg:
                 continue
                 
@@ -149,7 +171,7 @@ def main() -> None:
                     compass_packet = RoveCommPacket(
                         manifest["Nav"]["Telemetry"]["CompassData"]["dataId"], 
                         "f", 
-                        (heading,)
+                        (float(heading),)
                     )
                     rovecomm_node.write(compass_packet, False)
 
@@ -160,11 +182,21 @@ def main() -> None:
                         f"HeadAcc: {current_heading_acc:.3f}, Fix: {effective_fix_type}, Diff: {current_diff}"
                     )
 
-                    # Send GPS Data (Fusing EKF position with GPS accuracy)
+                    # Explicitly cast all values to float (Python's native C Double) 
+                    # before sending the RoveComm 'd' struct payload.
                     gps_packet = RoveCommPacket(
                         manifest["Nav"]["Telemetry"]["GPSLatLonAlt"]["dataId"], 
                         "d", 
-                        (lat, lon, alt, current_hacc, current_vacc, current_heading_acc, effective_fix_type, current_diff)
+                        (
+                            float(lat), 
+                            float(lon), 
+                            float(alt), 
+                            float(current_hacc), 
+                            float(current_vacc), 
+                            float(current_heading_acc), 
+                            float(effective_fix_type), 
+                            float(current_diff)
+                        )
                     )
                     rovecomm_node.write(gps_packet, False)
 
@@ -173,16 +205,27 @@ def main() -> None:
             # ------------------------------------------------------------------
             elif msg_type == "GPS_RAW_INT":
                 num_svs = msg.satellites_visible
-                current_fix_type = msg.fix_type
+                mavlink_fix = msg.fix_type
                 
                 # ArduPilot Fix Types: 0/1=No Fix, 2=2D, 3=3D, 4=DGPS, 5=RTK Float, 6=RTK Fixed
-                current_diff = 1 if current_fix_type >= 4 else 0
+                # Determine differential status from MAVLink fix
+                current_diff = 1 if mavlink_fix >= 4 else 0
                 
-                # Standard horizontal/vertical DOP values (eph/epv are in cm)
-                current_hacc = (msg.eph / 100.0) if msg.eph != 65535 else 0.0
-                current_vacc = (msg.epv / 100.0) if msg.epv != 65535 else 0.0
+                # Translate MAVLink fix type to U-blox NavPVT fix type standard
+                if mavlink_fix <= 1:
+                    current_fix_type = 0  # No Fix
+                elif mavlink_fix == 2:
+                    current_fix_type = 2  # 2D Fix
+                elif mavlink_fix >= 3:
+                    current_fix_type = 3  # 3D Fix (NavPVT uses 3 for 3D, DGPS, and RTK)
                 
-                # MAVLink 2 extended fields provide precise mm/deg level accuracy
+                # Default to 0.0 to prevent passing HDOP as accuracy. 
+                # We strictly rely on extended fields for actual error estimations.
+                current_hacc = 0.0
+                current_vacc = 0.0
+                
+                # Because we forced MAVLINK20 above, these extended 
+                # fields should reliably be populated if the FC supports them.
                 if hasattr(msg, 'h_acc') and msg.h_acc > 0:
                     current_hacc = msg.h_acc / 1000.0  # mm to meters
                 if hasattr(msg, 'v_acc') and msg.v_acc > 0:
@@ -196,7 +239,7 @@ def main() -> None:
                 sat_packet = RoveCommPacket(
                     manifest["Nav"]["Telemetry"]["SatelliteCountData"]["dataId"], 
                     "B", 
-                    (num_svs,)
+                    (int(num_svs),)
                 )
                 rovecomm_node.write(sat_packet, False)
 
