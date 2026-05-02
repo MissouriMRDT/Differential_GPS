@@ -187,7 +187,7 @@ def main() -> None:
 
                 packet = RoveCommPacket(
                     manifest["Nav"]["Telemetry"]["SatelliteCountData"]["dataId"], 
-                    "h", 
+                    "B", 
                     (numSvs,)
                 )
                 rovecomm_node.write(packet, False)
