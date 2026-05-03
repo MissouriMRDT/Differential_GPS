@@ -1,266 +1,245 @@
-# Differential GPS Solution
+# Differential GPS Navigation Board
 
-This repository contains the necessary components to set up a Differential GPS (DGPS) solution for precise positioning. The system is divided into two parts: the **Rover-side** and the **Basestation-side**. Follow the instructions below to set up each side.
+This repository contains the software and configuration for the Mars Rover Design Team's Differential GPS Navigation Board. The core of the system is a Python daemon (`nav_board.py`) that interfaces with an ArduPilot-based flight controller (e.g., ARK FPV, Pixhawk) over a USB MAVLink 2 connection. It extracts high-precision RTK GPS data and EKF-fused compass headings, and broadcasts them to the rover's autonomy system via RoveComm.
 
----
+## Table of Contents
 
-0. **Enable Serial**
-   To enable serial communication on the Raspberry Pi's GPIO pins:
+1. [Hardware Requirements](#1-hardware-requirements)
 
-   a. **Edit the config.txt file**
-      ```bash
-      sudo nano /boot/config.txt
-      ```
-      Add the following line at the end:
-      ```
-      enable_uart=1
-      ```
+2. [Raspberry Pi Setup (From Scratch)](#2-raspberry-pi-setup-from-scratch)
 
-   b. **Disable Serial Console (if enabled)**
-      ```bash
-      sudo raspi-config
-      ```
-      Navigate to "Interface Options" > "Serial" and:
-      - Disable "Login shell to be accessible over serial"
-      - Enable "Serial port hardware"
+3. [Flight Controller (ArduPilot) Setup](#3-flight-controller-ardupilot-setup)
 
-   c. **Update User Permissions**
-      Add your user to the dialout group:
-      ```bash
-      sudo usermod -a -G dialout $USER
-      ```
+4. [GPS & Compass Setup](#4-gps--compass-setup)
 
-   d. **Reboot the Raspberry Pi**
-      ```bash
-      sudo reboot
-      ```
+5. [Software Installation](#5-software-installation)
 
-   e. **Verify Serial Port**
-      After reboot, check if the serial port is available:
-      ```bash
-      ls -l /dev/ttyAMA0
-      ls -l /dev/serial0
-      ```
-      
-      Note: On newer Raspberry Pi models, `/dev/serial0` is a symbolic link that points to the correct UART device.
+6. [Deployment (Systemd Service)](#6-deployment-systemd-service)
 
-## Rover-Side Setup
+7. [Troubleshooting](#7-troubleshooting)
 
-The rover-side is responsible for receiving GPS corrections and sending GPS data to the rover's navigation system.
-**Make sure to enable serial!**
+## 1. Hardware Requirements
 
-### Components:
-1. **`nav_board.py`**  
-   This script handles the GPS data processing and communication with the rover's navigation system. It uses the UBX protocol to decode GPS data and sends it to the rover via the RoveComm protocol.
+* **Companion Computer:** Raspberry Pi 4 or 5 (or similar Linux SBC)
 
-2. **`nav_board.service`**  
-   A systemd service to ensure `nav_board.py` runs automatically on system startup.
+* **Flight Controller:** ArduPilot compatible board (ARK FPV, Pixhawk, Cube)
 
-3. **`ntrip_to_serial.service`**  
-   A systemd service to connect to the NTRIP correction service and forward corrections to the GPS receiver via a serial connection.
+* **GPS:** U-blox F9P (Dual Antenna RTK) or M8P module with integrated compass
 
----
+* **Connection:** High-quality USB-A to USB-C/Micro cable connecting the Pi to the Flight Controller
 
-### Steps to Set Up the Rover-Side:
+## 2. Raspberry Pi Setup (From Scratch)
 
+If you are starting with a brand-new Raspberry Pi, follow these steps to configure the OS for hardware serial communication.
 
-1. **Install Dependencies**  
-   Ensure the following Python dependencies are installed:
-   ```bash
-   pip install pyserial pyubx2 rich utm
+### Step 2.1: Flash the OS
+
+1. Download and install the **Raspberry Pi Imager**.
+
+2. Select **Ubuntu Server 22.04 LTS (64-bit)** or **Raspberry Pi OS Lite (64-bit)**.
+
+3. Click the **Gear Icon (Advanced Options)** before writing:
+
+   * Set the hostname (e.g., `nav-board`).
+
+   * Enable SSH (Use password authentication or provide your public key).
+
+   * Set your username and password.
+
+   * Configure Wi-Fi if necessary.
+
+4. Write the image to the SD card, insert it into the Pi, and boot it up.
+
+### Step 2.2: System Dependencies & Permissions
+
+SSH into your Raspberry Pi and run the following system updates:
+
+```
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y git python3-pip pipenv build-essential
+```
+
+**CRITICAL: Add user to the `dialout` group.** Without this, Python cannot read data from the USB serial ports.
+
+```
+sudo usermod -a -G dialout $USER
+```
+
+*(You must log out and log back in, or reboot the Pi, for this to take effect).*
+
+### Step 2.3: Disable ModemManager
+
+Linux systems include a service called `ModemManager` that assumes all newly connected `/dev/ttyACM*` devices are cellular modems. It will aggressively ping the flight controller with `AT` commands, deadlocking the MAVLink connection. Disable it permanently:
+
+```
+sudo systemctl stop ModemManager
+sudo systemctl disable ModemManager
+```
+
+## 3. Flight Controller (ArduPilot) Setup
+
+The flight controller acts as an advanced sensor-fusion board. You must configure it via **Mission Planner** or **QGroundControl** before running this script.
+
+### Step 3.1: MAVLink 2 Configuration
+
+Connect the flight controller to your laptop, open QGroundControl, and navigate to the **Parameters** tab. Search for the `SERIAL0` parameters (Serial 0 represents the main USB Virtual COM Port).
+
+* **`SERIAL0_PROTOCOL` = `2` (MAVLink 2)** \* *Required to transmit extended precision fields like `hdg_acc`.*
+
+* **`SERIAL0_BAUD` = `115200`**
+
+### Step 3.2: Rover EKF Tweaks (Crucial for Ground Vehicles)
+
+Because rovers drive backwards and slip sideways, the default drone-based EKF (Extended Kalman Filter) will panic and violently snap the heading by 90° or 180° if the GPS track disagrees with the compass. **Apply these settings to force the EKF to strictly trust the compass:**
+
+* **`EK3_GSF_USE_MASK` = `0`** (Disabled)
+
+  * *Prevents the flight controller from resetting the yaw based on the GPS ground-course.*
+
+* **`COMPASS_LEARN` = `0`** (Disabled)
+
+  * *Prevents the EKF from permanently altering compass calibrations when you drive in reverse.*
+
+* **`EK3_SRC1_YAW` = `1`** (Compass)
+
+  * *Forces the EKF to use the Magnetometer as the sole source of truth for heading.*
+
+## 4. GPS & Compass Setup
+
+### Step 4.1: Physical Mounting
+
+* **Interference:** Rovers generate massive Electro-Magnetic Interference (EMI) from drive motors and high-current power wires. The GPS/Compass puck **must** be mounted on a non-magnetic mast, at least several inches away from power traces.
+
+* **Orientation:** The physical arrow on the GPS puck must point exactly towards the front of the rover. If physical constraints force you to mount it rotated, you must update the **`COMPASS_ORIENT`** parameter in ArduPilot (e.g., `Yaw90`, `Yaw180`).
+
+### Step 4.2: Calibration
+
+Once the GPS/Compass is permanently mounted on the rover, take the rover outside away from metal buildings. Connect to QGroundControl, go to **Sensors -> Compass**, and perform a full compass calibration dance. **Do not skip this step, or your heading will drift based on which direction you face.**
+
+## 5. Software Installation
+
+### Step 5.1: Clone the Repository
+
+Clone this repository to the Raspberry Pi. **You must use `--recursive` to pull down the RoveComm submodule.**
+
+```
+git clone --recursive [https://github.com/MarsRoverDesignTeam/Differential_GPS.git](https://github.com/MarsRoverDesignTeam/Differential_GPS.git)
+cd Differential_GPS
+```
+
+*(If you forgot `--recursive`, run `git submodule update --init --recursive` inside the folder).*
+
+### Step 5.2: Install Python Dependencies
+
+This project uses `pipenv` to manage dependencies (PyMavlink, PySerial, etc.) in a clean virtual environment.
+
+```
+pipenv install
+```
+
+### Step 5.3: Test the Script
+
+Plug the flight controller into the Raspberry Pi via USB. Run the script manually to verify data is flowing:
+
+```
+pipenv run python nav_board.py
+```
+
+If successful, you should see logs stating `EKF Absolute Horizontal Position Lock Acquired!` followed by a stream of `[TX GPS]` and `[TX Compass]` coordinates.
+
+## 6. Deployment (Systemd Service)
+
+To make the script run automatically in the background every time the Raspberry Pi turns on, install it as a `systemd` service utilizing the Pipenv virtual environment.
+
+### Step 6.1: Locate your Pipenv executable
+
+Systemd needs the absolute path to `pipenv`. Run this command to find it:
+
+```
+which pipenv
+```
+
+*(Note the output, e.g., `/usr/bin/pipenv` or `/home/ubuntu/.local/bin/pipenv`)*.
+
+### Step 6.2: Configure the Service File
+
+Open the included `nav_board.service` file and ensure it is structured like this. Replace `ubuntu` with your actual username, and update the `ExecStart` path with the output from Step 6.1:
+
+```
+[Unit]
+Description=Differential GPS MAVLink Service
+After=network.target
+
+[Service]
+Type=simple
+# Change 'ubuntu' to your actual Raspberry Pi username
+User=ubuntu
+
+# systemd MUST start in the folder where the Pipfile lives
+WorkingDirectory=/home/ubuntu/Differential_GPS
+
+# Use the absolute path to pipenv (from Step 6.1), followed by "run python"
+ExecStart=/usr/bin/pipenv run python nav_board.py
+
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### Step 6.3: Enable and Start the Service
+
+1. Copy the service file to the systemd directory:
+
+   ```
+   sudo cp nav_board.service /etc/systemd/system/
    ```
 
-2. **Set Up `nav_board.py`**  
-   - Place `nav_board.py` in a suitable directory (e.g., `/home/pi/Differential_GPS/`).
-   - Ensure the script is executable:
-     ```bash
-     chmod +x /home/pi/Differential_GPS/nav_board.py
-     ```
+2. Reload the systemd daemon to recognize the new file:
 
-3. **Configure `nav_board.service`**  
-   - Copy the `nav_board.service` file to the systemd directory:
-     ```bash
-     sudo cp nav_board.service /etc/systemd/system/
-     ```
-   - Reload systemd and enable the service:
-     ```bash
-     sudo systemctl daemon-reload
-     sudo systemctl enable nav_board.service
-     sudo systemctl start nav_board.service
-     ```
-
-4. **Configure `ntrip_to_serial.service`**  
-   - Copy the `ntrip_to_serial.service` file to the systemd directory:
-     ```bash
-     sudo cp ntrip_to_serial.service /etc/systemd/system/
-     ```
-   - Reload systemd and enable the service:
-     ```bash
-     sudo systemctl daemon-reload
-     sudo systemctl enable ntrip_to_serial.service
-     sudo systemctl start ntrip_to_serial.service
-     ```
-
-5. **Verify Services**  
-   Check the status of the services to ensure they are running:
-   ```bash
-   sudo systemctl status nav_board.service
-   sudo systemctl status ntrip_to_serial.service
+   ```
+   sudo systemctl daemon-reload
    ```
 
----
+3. Enable the service to run on boot:
 
-## Basestation-Side Setup
-
-The basestation-side is responsible for broadcasting GPS corrections to the rover.
-**Make sure to enable serial!**
-
-### Components:
-1. **RTKBase**  
-   The RTKBase repository provides the tools and services to set up a GNSS base station with a web frontend for configuration.
-
----
-
-### Steps to Set Up the Basestation-Side:
-
-1. **Clone the RTKBase Repository**  
-   Clone the RTKBase repository to your system:
-   ```bash
-   git clone https://github.com/Stefal/rtkbase.git
-   cd rtkbase
+   ```
+   sudo systemctl enable nav_board
    ```
 
-2. **Install RTKBase**  
-   Run the installation script to set up RTKBase:
-   ```bash
-   sudo ./install.sh --all release
+4. Start the service immediately:
+
+   ```
+   sudo systemctl start nav_board
    ```
 
-3. **Configure the GNSS Receiver**  
-   If you are using a U-Blox ZED-F9P receiver, configure it using the following command:
-   ```bash
-   sudo ./install.sh --detect-gnss --configure-gnss
-   ```
+To view the live logs of the background service, run:
 
-4. **Start RTKBase Services**  
-   Start the necessary services for RTKBase:
-   ```bash
-   sudo systemctl start rtkbase_web
-   sudo systemctl start str2str_tcp
-   sudo systemctl start gpsd
-   sudo systemctl start chrony
-   sudo systemctl start rtkbase_archive.timer
-   ```
+```
+journalctl -u nav_board -f
+```
 
-5. **Access the Web Interface**  
-   Open a web browser and navigate to the IP address of your basestation to access the RTKBase web interface.
+## 7. Troubleshooting
 
-6. **Verify Services**  
-   Check the status of the RTKBase services:
-   ```bash
-   sudo systemctl status rtkbase_web
-   sudo systemctl status str2str_tcp
-   ```
+* **Hanging on "Broadcasting GCS heartbeat..."**
 
----
+  * Ensure `ModemManager` is fully disabled.
 
-## Additional Notes
+  * Ensure the flight controller's `SERIAL0_PROTOCOL` is exactly `2` (MAVLink 2). PyMavlink will silently discard MAVLink 2 packets if it expects MAVLink 1, and vice versa.
 
-- **Logging**: Logs for the rover-side services can be found in the system journal. Use `journalctl` to view logs:
-  ```bash
-  sudo journalctl -u nav_board.service
-  sudo journalctl -u ntrip_to_serial.service
-  ```
+* **"Device /dev/ttyACM1 is dead" or instant crashes on connect**
 
-- **NTRIP Configuration**: Ensure the NTRIP caster details (e.g., URL, port, username, password) are correctly configured in the `corrections_command.txt` file or the RTKBase settings.
+  * Modern flight controllers expose two virtual USB ports. `ttyACM0` is usually MAVLink, and `ttyACM1` is usually SLCAN (DroneCAN). Sending MAVLink packets to the CAN interface will instantly crash the port. The script is designed to auto-sort and pick `ttyACM0`, but if you have multiple USB devices plugged in, you can force the port:
 
-- **Dependencies**: Both the rover and basestation require Python 3 and systemd to be installed.
+    ```
+    pipenv run python nav_board.py --serial-path /dev/ttyACM0
+    ```
 
----
+* **Heading accuracy stays locked at `360.0`**
 
-...
+  * This is normal if the rover is stationary and utilizing a single-antenna GPS. Single-antenna GPS units can only estimate heading accuracy while moving. Once you drive a few meters, this value will drop. (Dual-antenna RTK setups will provide stationary heading accuracy).
 
-## Important Hardware Info
+* **Rover heading suddenly snaps 90° or 180° while driving**
 
-To ensure proper communication between the Raspberry Pi and the GNSS receiver, a **USB-A to Micro USB cable** must be connected as follows:
-
-- **From**: The Raspberry Pi's **user header** (USB-A port).  
-- **To**: The **Micro USB port** on the opposite side of the GNSS receiver board.
-
-This connection is critical for powering and communicating with the GNSS receiver. Ensure the cable is securely connected to avoid interruptions in data transmission.
-
-### Connection Diagram
-
-![Raspberry Pi to GNSS Receiver STACK](resources/Stack.jpg)
-*Figure 1: The full stack.*
-
-![GNSS Receiver Micro USB Port](resources/USB_Cable.jpg)
-*Figure 2: Diagram showing the USB connection from Raspberry Pi to the GNSS receiver*
-
-...
-
-## Flashing and Configuring u-blox Modules
-
-Proper configuration of the u-blox GNSS modules is essential for optimal performance of the Differential GPS system. This section outlines the steps to flash and configure these modules for use with SimpleRTK.
-
-### Required Software
-
-1. **u-center** - The official configuration tool from u-blox
-   - Download from [u-blox website](https://www.u-blox.com/en/product/u-center)
-   - Available for Windows only
-
-### Configuration Backups
-
-Pre-configured settings are available in the `config_baks` folder, which contains:
-- `base_config.txt` - Configuration backup for the base station
-- `rover_config.txt` - Configuration backup for the rover
-- `rover_heading_config.txt` - Configuration backup for the smaller heading board (hat) on the rover. 
-
-### Configuration Steps
-
-#### For Base Station:
-
-1. **Connect the u-blox module** to your computer using a USB cable
-2. **Open u-center** and connect to the correct COM port
-3. **Restore the configuration**:
-   - Go to `Tools` > `Receiver Configuration`
-   - Click `Load configuration`
-   - Select the `base_config.txt` file from the `config_baks` folder
-   - Click `Transfer file -> GNSS` to apply the settings
-4. **Verify the configuration**:
-   - Check that the module is configured to output RTCM3 messages
-   - Ensure the survey-in parameters are correctly set
-
-#### For Rover:
-
-1. **Connect the u-blox module** to your computer
-2. **Open u-center** and connect to the module
-3. **Restore the configuration**:
-   - Go to `Tools` > `Receiver Configuration`
-   - Click `Load configuration`
-   - Select the `rover_config.txt` file from the `config_baks` folder
-   - Click `Transfer file -> GNSS` to apply the settings
-4. **Verify the configuration**:
-   - Check that the module is configured to receive RTCM3 messages
-   - Ensure the update rate and dynamic model are appropriate for your application
-
-### Saving Custom Configurations
-
-If you make any changes to the configurations:
-
-1. Go to `Tools` > `Receiver Configuration`
-2. Click `Save configuration`
-3. Save the file with an appropriate name
-4. Consider adding it to the `config_baks` folder with documentation of your changes
-
-### Troubleshooting
-
-- If the module doesn't appear to accept the configuration, try a factory reset:
-  - In u-center, go to `View` > `Messages View` > `UBX` > `CFG` > `RST`
-  - Set the clearMask and saveMask as needed, then send the command
-
-- For connection issues, verify that:
-  - The correct COM port is selected
-  - Baud rate is set appropriately (typically 38400 or 115200)
-  - The USB drivers are properly installed
-  - Using the `test_serial.py` and `ubxpoller2.py` script to view incoming serial messages on the RPI.
+  * Your EKF is using GPS Ground Course as a fallback and fighting the compass. Ensure you have followed the parameters outlined in **Step 3.2**.

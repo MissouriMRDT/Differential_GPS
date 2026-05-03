@@ -1,13 +1,19 @@
 [Unit]
-Description=MRDT NavBoard linux service for sending GPS data.
-After=multi-user.target
+Description=Differential GPS MAVLink Service
+After=network.target
 
 [Service]
-User=pi
-Environment="PYTHONPATH=/home/pi/.local/lib/python/site-packages"
 Type=simple
-Restart=always
-ExecStart=/usr/bin/python /home/pi/Differential_GPS/nav_board.py
+User=pi
+
+# systemd MUST start in the folder where the Pipfile lives
+WorkingDirectory=/home/pi/Differential_GPS
+
+# Use the absolute path to pipenv (from Step 6.1), followed by "run python"
+ExecStart=/usr/bin/pipenv run python nav_board.py
+
+Restart=on-failure
+RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
