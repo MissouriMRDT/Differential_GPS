@@ -3,6 +3,8 @@ Description=MRDT NavBoard linux service for sending GPS data.
 After=multi-user.target
 
 [Service]
+User=pi
+Environment="PYTHONPATH=/home/pi/.local/lib/python/site-packages"
 Type=simple
 Restart=always
 ExecStart=/usr/bin/python /home/pi/Differential_GPS/nav_board.py

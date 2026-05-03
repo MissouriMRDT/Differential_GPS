@@ -1,6 +1,3 @@
 [submodule "RoveComm_Python"]
 	path = RoveComm_Python
 	url = https://github.com/MissouriMRDT/RoveComm_Python.git
-[submodule "rtkbase"]
-	path = rtkbase
-	url = https://github.com/Stefal/rtkbase.git
